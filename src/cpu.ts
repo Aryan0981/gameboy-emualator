@@ -145,6 +145,58 @@ export class CPU {
     return (high << 8) | low;
   }
 
+  // --- ALU operations on register A. Each sets flags per Game Boy rules. ---
+
+  private addA(value: number, withCarry: boolean = false): void {
+    const carryIn = withCarry && this.flagC ? 1 : 0;
+    const result = this.a + value + carryIn;
+
+    const z = (result & 0xff) === 0;
+    const h = ((this.a & 0x0f) + (value & 0x0f) + carryIn) > 0x0f;
+    const c = result > 0xff;
+
+    this.a = result & 0xff;
+    this.setFlags(z, false, h, c);
+  }
+
+  private subA(value: number, withCarry: boolean = false): void {
+    const carryIn = withCarry && this.flagC ? 1 : 0;
+    const result = this.a - value - carryIn;
+
+    const z = (result & 0xff) === 0;
+    const h = ((this.a & 0x0f) - (value & 0x0f) - carryIn) < 0;
+    const c = result < 0;
+
+    this.a = result & 0xff;
+    this.setFlags(z, true, h, c);
+  }
+
+  private andA(value: number): void {
+    this.a = this.a & value;
+    this.setFlags(this.a === 0, false, true, false); // H is always set for AND
+  }
+
+  private orA(value: number): void {
+    this.a = this.a | value;
+    this.setFlags(this.a === 0, false, false, false);
+  }
+
+  private xorA(value: number): void {
+    this.a = this.a ^ value;
+    this.setFlags(this.a === 0, false, false, false);
+  }
+
+  // CP = compare: subtract but DISCARD the result, keeping only the flags.
+  private cpA(value: number): void {
+    const result = this.a - value;
+
+    const z = (result & 0xff) === 0;
+    const h = ((this.a & 0x0f) - (value & 0x0f)) < 0;
+    const c = result < 0;
+
+    this.setFlags(z, true, h, c);
+  }
+
   step(): void {
     const opcode = this.fetch();
     this.execute(opcode);
@@ -177,6 +229,43 @@ export class CPU {
       const value = this.fetch(); // the immediate byte follows the opcode
 
       this.writeReg(dest, value);
+      return;
+    }
+
+    // ALU on A: opcodes 0x80-0xBF. Source register = bits 0-2.
+    // The operation is chosen by bits 3-5:
+    //   0=ADD 1=ADC 2=SUB 3=SBC 4=AND 5=XOR 6=OR 7=CP
+    if (opcode >= 0x80 && opcode <= 0xbf) {
+      const src = opcode & 0x07;
+      const value = this.readReg(src);
+      const op = (opcode >> 3) & 0x07;
+
+      switch (op) {
+        case 0:
+          this.addA(value);
+          break;
+        case 1:
+          this.addA(value, true);
+          break;
+        case 2:
+          this.subA(value);
+          break;
+        case 3:
+          this.subA(value, true);
+          break;
+        case 4:
+          this.andA(value);
+          break;
+        case 5:
+          this.xorA(value);
+          break;
+        case 6:
+          this.orA(value);
+          break;
+        case 7:
+          this.cpA(value);
+          break;
+      }
       return;
     }
 
