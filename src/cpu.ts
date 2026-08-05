@@ -145,6 +145,29 @@ export class CPU {
     return (high << 8) | low;
   }
 
+  // --- The stack lives in memory and grows DOWNWARD. ---
+  // Push: move SP down by 2, then store the 16-bit value (high byte first).
+  private push16(value: number): void {
+    this.sp = (this.sp - 1) & 0xffff;
+    this.memory.write(this.sp, (value >> 8) & 0xff); // high byte
+    this.sp = (this.sp - 1) & 0xffff;
+    this.memory.write(this.sp, value & 0xff); // low byte
+  }
+
+  // Pop: read the 16-bit value (low byte first), then move SP up by 2.
+  private pop16(): number {
+    const low = this.memory.read(this.sp);
+    this.sp = (this.sp + 1) & 0xffff;
+    const high = this.memory.read(this.sp);
+    this.sp = (this.sp + 1) & 0xffff;
+    return (high << 8) | low;
+  }
+
+  // Convert an unsigned byte (0-255) to a signed offset (-128 to +127).
+  private toSigned(byte: number): number {
+    return byte < 0x80 ? byte : byte - 0x100;
+  }
+
   // --- ALU operations on register A. Each sets flags per Game Boy rules. ---
 
   private addA(value: number, withCarry: boolean = false): void {
@@ -195,6 +218,30 @@ export class CPU {
     const c = result < 0;
 
     this.setFlags(z, true, h, c);
+  }
+
+  // --- Control-flow helpers ---
+
+  private jumpIf(condition: boolean): void {
+    const address = this.fetch16(); // always read the operand, even if not taken
+    if (condition) {
+      this.pc = address;
+    }
+  }
+
+  private jumpRelativeIf(condition: boolean): void {
+    const offset = this.toSigned(this.fetch()); // signed offset
+    if (condition) {
+      this.pc = (this.pc + offset) & 0xffff;
+    }
+  }
+
+  private callIf(condition: boolean): void {
+    const address = this.fetch16();
+    if (condition) {
+      this.push16(this.pc); // save where to come back to
+      this.pc = address;
+    }
   }
 
   step(): void {
@@ -288,6 +335,104 @@ export class CPU {
         break;
       case 0x31:
         this.sp = this.fetch16(); // LD SP, nn
+        break;
+
+      // --- Jumps ---
+      case 0xc3: // JP nn : jump to a 16-bit address
+        this.pc = this.fetch16();
+        break;
+
+      case 0xc2: // JP NZ, nn : jump if Zero flag is CLEAR
+        this.jumpIf(!this.flagZ);
+        break;
+      case 0xca: // JP Z, nn : jump if Zero flag is SET
+        this.jumpIf(this.flagZ);
+        break;
+      case 0xd2: // JP NC, nn : jump if Carry flag is CLEAR
+        this.jumpIf(!this.flagC);
+        break;
+      case 0xda: // JP C, nn : jump if Carry flag is SET
+        this.jumpIf(this.flagC);
+        break;
+
+      case 0xe9: // JP (HL) : jump to the address in HL
+        this.pc = this.hl;
+        break;
+
+      // --- Relative jumps (signed offset from current position) ---
+      case 0x18: // JR n
+        this.jumpRelativeIf(true);
+        break;
+      case 0x20: // JR NZ, n
+        this.jumpRelativeIf(!this.flagZ);
+        break;
+      case 0x28: // JR Z, n
+        this.jumpRelativeIf(this.flagZ);
+        break;
+      case 0x30: // JR NC, n
+        this.jumpRelativeIf(!this.flagC);
+        break;
+      case 0x38: // JR C, n
+        this.jumpRelativeIf(this.flagC);
+        break;
+
+      // --- Calls and returns (use the stack) ---
+      case 0xcd: // CALL nn
+        this.callIf(true);
+        break;
+      case 0xc4: // CALL NZ, nn
+        this.callIf(!this.flagZ);
+        break;
+      case 0xcc: // CALL Z, nn
+        this.callIf(this.flagZ);
+        break;
+      case 0xd4: // CALL NC, nn
+        this.callIf(!this.flagC);
+        break;
+      case 0xdc: // CALL C, nn
+        this.callIf(this.flagC);
+        break;
+
+      case 0xc9: // RET : pop return address off the stack
+        this.pc = this.pop16();
+        break;
+      case 0xc0: // RET NZ
+        if (!this.flagZ) this.pc = this.pop16();
+        break;
+      case 0xc8: // RET Z
+        if (this.flagZ) this.pc = this.pop16();
+        break;
+      case 0xd0: // RET NC
+        if (!this.flagC) this.pc = this.pop16();
+        break;
+      case 0xd8: // RET C
+        if (this.flagC) this.pc = this.pop16();
+        break;
+
+      // --- Stack push/pop of register pairs ---
+      case 0xc5: // PUSH BC
+        this.push16(this.bc);
+        break;
+      case 0xd5: // PUSH DE
+        this.push16(this.de);
+        break;
+      case 0xe5: // PUSH HL
+        this.push16(this.hl);
+        break;
+      case 0xf5: // PUSH AF
+        this.push16(this.af);
+        break;
+      case 0xc1: // POP BC
+        this.bc = this.pop16();
+        break;
+      case 0xd1: // POP DE
+        this.de = this.pop16();
+        break;
+      case 0xe1: // POP HL
+        this.hl = this.pop16();
+        break;
+      case 0xf1: // POP AF
+        this.af = this.pop16();
         break;
 
       default:
