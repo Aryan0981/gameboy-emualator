@@ -411,6 +411,41 @@ export class CPU {
         this.sp = this.fetch16(); // LD SP, nn
         break;
 
+      case 0xf9: // LD SP, HL : copy the whole HL pair into the stack pointer
+        this.sp = this.hl;
+        break;
+
+      case 0xe8: // ADD SP, n : add a SIGNED byte to SP. Z=0, N=0; H/C from the LOW byte.
+        {
+          const offset = this.toSigned(this.fetch());
+          const result = (this.sp + offset) & 0xffff;
+          // Half-carry and carry are computed on the low byte, as unsigned adds.
+          const h = ((this.sp & 0x0f) + (offset & 0x0f)) > 0x0f;
+          const c = ((this.sp & 0xff) + (offset & 0xff)) > 0xff;
+          this.setFlags(false, false, h, c);
+          this.sp = result;
+        }
+        break;
+
+      case 0xf8: // LD HL, SP+n : HL = SP + signed byte. Same flag rules as ADD SP,n.
+        {
+          const offset = this.toSigned(this.fetch());
+          const result = (this.sp + offset) & 0xffff;
+          const h = ((this.sp & 0x0f) + (offset & 0x0f)) > 0x0f;
+          const c = ((this.sp & 0xff) + (offset & 0xff)) > 0xff;
+          this.setFlags(false, false, h, c);
+          this.hl = result;
+        }
+        break;
+
+      case 0x08: // LD (nn), SP : store SP to a direct address, low byte first
+        {
+          const address = this.fetch16();
+          this.memory.write(address, this.sp & 0xff); // low byte
+          this.memory.write((address + 1) & 0xffff, (this.sp >> 8) & 0xff); // high byte
+        }
+        break;
+
       // --- Jumps ---
       case 0xc3: // JP nn : jump to a 16-bit address
         this.pc = this.fetch16();
@@ -469,6 +504,11 @@ export class CPU {
 
       case 0xc9: // RET : pop return address off the stack
         this.pc = this.pop16();
+        break;
+
+      case 0xd9: // RETI : return, then re-enable interrupts
+        this.pc = this.pop16();
+        this.interruptsEnabled = true;
         break;
       case 0xc0: // RET NZ
         if (!this.flagZ) this.pc = this.pop16();
