@@ -220,6 +220,25 @@ export class CPU {
     this.setFlags(z, true, h, c);
   }
 
+  // --- INC/DEC helpers ---
+
+  // 8-bit increment: sets Z, N=0, H; leaves Carry UNTOUCHED.
+  private inc8(value: number): number {
+    const result = (value + 1) & 0xff;
+    const h = (value & 0x0f) + 1 > 0x0f;
+    // Preserve the existing carry flag; only Z, N, H change.
+    this.setFlags(result === 0, false, h, this.flagC);
+    return result;
+  }
+
+  // 8-bit decrement: sets Z, N=1, H; leaves Carry UNTOUCHED.
+  private dec8(value: number): number {
+    const result = (value - 1) & 0xff;
+    const h = (value & 0x0f) === 0; // borrow out of the low nibble
+    this.setFlags(result === 0, true, h, this.flagC);
+    return result;
+  }
+
   // --- Control-flow helpers ---
 
   private jumpIf(condition: boolean): void {
@@ -433,6 +452,84 @@ export class CPU {
         break;
       case 0xf1: // POP AF
         this.af = this.pop16();
+        break;
+
+      // --- 8-bit INC (dest = bits 3-5) ---
+      case 0x04: // INC B
+        this.b = this.inc8(this.b);
+        break;
+      case 0x0c: // INC C
+        this.c = this.inc8(this.c);
+        break;
+      case 0x14: // INC D
+        this.d = this.inc8(this.d);
+        break;
+      case 0x1c: // INC E
+        this.e = this.inc8(this.e);
+        break;
+      case 0x24: // INC H
+        this.h = this.inc8(this.h);
+        break;
+      case 0x2c: // INC L
+        this.l = this.inc8(this.l);
+        break;
+      case 0x34: // INC (HL)
+        this.memory.write(this.hl, this.inc8(this.memory.read(this.hl)));
+        break;
+      case 0x3c: // INC A
+        this.a = this.inc8(this.a);
+        break;
+
+      // --- 8-bit DEC ---
+      case 0x05: // DEC B
+        this.b = this.dec8(this.b);
+        break;
+      case 0x0d: // DEC C
+        this.c = this.dec8(this.c);
+        break;
+      case 0x15: // DEC D
+        this.d = this.dec8(this.d);
+        break;
+      case 0x1d: // DEC E
+        this.e = this.dec8(this.e);
+        break;
+      case 0x25: // DEC H
+        this.h = this.dec8(this.h);
+        break;
+      case 0x2d: // DEC L
+        this.l = this.dec8(this.l);
+        break;
+      case 0x35: // DEC (HL)
+        this.memory.write(this.hl, this.dec8(this.memory.read(this.hl)));
+        break;
+      case 0x3d: // DEC A
+        this.a = this.dec8(this.a);
+        break;
+
+      // --- 16-bit INC/DEC : NO flags are affected ---
+      case 0x03: // INC BC
+        this.bc = (this.bc + 1) & 0xffff;
+        break;
+      case 0x13: // INC DE
+        this.de = (this.de + 1) & 0xffff;
+        break;
+      case 0x23: // INC HL
+        this.hl = (this.hl + 1) & 0xffff;
+        break;
+      case 0x33: // INC SP
+        this.sp = (this.sp + 1) & 0xffff;
+        break;
+      case 0x0b: // DEC BC
+        this.bc = (this.bc - 1) & 0xffff;
+        break;
+      case 0x1b: // DEC DE
+        this.de = (this.de - 1) & 0xffff;
+        break;
+      case 0x2b: // DEC HL
+        this.hl = (this.hl - 1) & 0xffff;
+        break;
+      case 0x3b: // DEC SP
+        this.sp = (this.sp - 1) & 0xffff;
         break;
 
       default:
