@@ -17,6 +17,8 @@ export class CPU {
   sp = 0;
   pc = 0;
 
+  interruptsEnabled = false;
+
   constructor(memory: Memory) {
     this.memory = memory;
   }
@@ -166,6 +168,12 @@ export class CPU {
   // Convert an unsigned byte (0-255) to a signed offset (-128 to +127).
   private toSigned(byte: number): number {
     return byte < 0x80 ? byte : byte - 0x100;
+  }
+
+  // RST: push current pc, then jump to a fixed low address.
+  private rst(address: number): void {
+    this.push16(this.pc);
+    this.pc = address;
   }
 
   // --- ALU operations on register A. Each sets flags per Game Boy rules. ---
@@ -563,6 +571,134 @@ export class CPU {
         break;
       case 0x39: // ADD HL, SP
         this.addHL(this.sp);
+        break;
+
+      // --- Immediate ALU (operate A with the next byte) ---
+      case 0xc6: // ADD A, n
+        this.addA(this.fetch());
+        break;
+      case 0xce: // ADC A, n
+        this.addA(this.fetch(), true);
+        break;
+      case 0xd6: // SUB A, n
+        this.subA(this.fetch());
+        break;
+      case 0xde: // SBC A, n
+        this.subA(this.fetch(), true);
+        break;
+      case 0xe6: // AND n
+        this.andA(this.fetch());
+        break;
+      case 0xf6: // OR n
+        this.orA(this.fetch());
+        break;
+      case 0xee: // XOR n
+        this.xorA(this.fetch());
+        break;
+      case 0xfe: // CP n
+        this.cpA(this.fetch());
+        break;
+
+      // --- Loads to/from A at an address in a register pair ---
+      case 0x02: // LD (BC), A
+        this.memory.write(this.bc, this.a);
+        break;
+      case 0x12: // LD (DE), A
+        this.memory.write(this.de, this.a);
+        break;
+      case 0x0a: // LD A, (BC)
+        this.a = this.memory.read(this.bc);
+        break;
+      case 0x1a: // LD A, (DE)
+        this.a = this.memory.read(this.de);
+        break;
+
+      // --- HL auto-increment / auto-decrement loads ---
+      case 0x22: // LD (HL+), A  -- store A, then HL++
+        this.memory.write(this.hl, this.a);
+        this.hl = (this.hl + 1) & 0xffff;
+        break;
+      case 0x32: // LD (HL-), A  -- store A, then HL--
+        this.memory.write(this.hl, this.a);
+        this.hl = (this.hl - 1) & 0xffff;
+        break;
+      case 0x2a: // LD A, (HL+)  -- load A, then HL++
+        this.a = this.memory.read(this.hl);
+        this.hl = (this.hl + 1) & 0xffff;
+        break;
+      case 0x3a: // LD A, (HL-)  -- load A, then HL--
+        this.a = this.memory.read(this.hl);
+        this.hl = (this.hl - 1) & 0xffff;
+        break;
+
+      // --- Direct-address loads (16-bit address in the instruction) ---
+      case 0xea: // LD (nn), A
+        this.memory.write(this.fetch16(), this.a);
+        break;
+      case 0xfa: // LD A, (nn)
+        this.a = this.memory.read(this.fetch16());
+        break;
+
+      // --- High-memory (0xFF00+) loads: talk to I/O hardware ---
+      case 0xe0: // LDH (n), A  -- write A to 0xFF00 + n
+        this.memory.write(0xff00 + this.fetch(), this.a);
+        break;
+      case 0xf0: // LDH A, (n)  -- read from 0xFF00 + n into A
+        this.a = this.memory.read(0xff00 + this.fetch());
+        break;
+      case 0xe2: // LD (C), A  -- write A to 0xFF00 + C
+        this.memory.write(0xff00 + this.c, this.a);
+        break;
+      case 0xf2: // LD A, (C)  -- read from 0xFF00 + C into A
+        this.a = this.memory.read(0xff00 + this.c);
+        break;
+
+      // --- Accumulator rotates (like CB rotates but on A; Z is always 0 here) ---
+      case 0x07: // RLCA
+        this.a = this.rlc(this.a);
+        this.setFlags(false, false, false, this.flagC);
+        break;
+      case 0x0f: // RRCA
+        this.a = this.rrc(this.a);
+        this.setFlags(false, false, false, this.flagC);
+        break;
+      case 0x17: // RLA
+        this.a = this.rl(this.a);
+        this.setFlags(false, false, false, this.flagC);
+        break;
+      case 0x1f: // RRA
+        this.a = this.rr(this.a);
+        this.setFlags(false, false, false, this.flagC);
+        break;
+
+      // --- Flag / accumulator oddballs ---
+      case 0x2f: // CPL : flip all bits of A. N=1, H=1.
+        this.a = (~this.a) & 0xff;
+        this.setFlags(this.flagZ, true, true, this.flagC);
+        break;
+      case 0x37: // SCF : set carry flag. N=0, H=0.
+        this.setFlags(this.flagZ, false, false, true);
+        break;
+      case 0x3f: // CCF : flip carry flag. N=0, H=0.
+        this.setFlags(this.flagZ, false, false, !this.flagC);
+        break;
+
+      // --- RST : fast call to a fixed low address ---
+      case 0xc7: this.rst(0x00); break;
+      case 0xcf: this.rst(0x08); break;
+      case 0xd7: this.rst(0x10); break;
+      case 0xdf: this.rst(0x18); break;
+      case 0xe7: this.rst(0x20); break;
+      case 0xef: this.rst(0x28); break;
+      case 0xf7: this.rst(0x30); break;
+      case 0xff: this.rst(0x38); break;
+
+      // --- Interrupt enable/disable (stubbed; full behavior later) ---
+      case 0xf3: // DI : disable interrupts
+        this.interruptsEnabled = false;
+        break;
+      case 0xfb: // EI : enable interrupts
+        this.interruptsEnabled = true;
         break;
 
       default:
