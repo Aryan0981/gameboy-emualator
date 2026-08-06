@@ -277,6 +277,13 @@ export class CPU {
 
   step(): void {
     const opcode = this.fetch();
+
+    if (opcode === 0xcb) {
+      const cbOpcode = this.fetch(); // the real instruction is the next byte
+      this.executeCB(cbOpcode);
+      return;
+    }
+
     this.execute(opcode);
   }
 
@@ -561,5 +568,109 @@ export class CPU {
       default:
         console.warn(`Unknown opcode: 0x${opcode.toString(16).padStart(2, "0")}`);
     }
+  }
+
+  // --- Rotate/shift helpers (each returns the result and sets flags) ---
+  // For all of these on the Game Boy: N=0, H=0. Z = result is zero.
+  // C receives the bit that was shifted out.
+
+  private rlc(v: number): number { // rotate left, old bit 7 -> carry AND bit 0
+    const carry = (v >> 7) & 1;
+    const result = ((v << 1) | carry) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private rrc(v: number): number { // rotate right, old bit 0 -> carry AND bit 7
+    const carry = v & 1;
+    const result = ((v >> 1) | (carry << 7)) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private rl(v: number): number { // rotate left THROUGH carry
+    const carry = (v >> 7) & 1;
+    const result = ((v << 1) | (this.flagC ? 1 : 0)) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private rr(v: number): number { // rotate right THROUGH carry
+    const carry = v & 1;
+    const result = ((v >> 1) | (this.flagC ? 0x80 : 0)) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private sla(v: number): number { // shift left, 0 into bit 0
+    const carry = (v >> 7) & 1;
+    const result = (v << 1) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private sra(v: number): number { // shift right, bit 7 stays (arithmetic)
+    const carry = v & 1;
+    const result = ((v >> 1) | (v & 0x80)) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  private swap(v: number): number { // swap the two nibbles
+    const result = ((v & 0x0f) << 4) | ((v & 0xf0) >> 4);
+    this.setFlags(result === 0, false, false, false); // C=0 for SWAP
+    return result;
+  }
+
+  private srl(v: number): number { // shift right, 0 into bit 7 (logical)
+    const carry = v & 1;
+    const result = (v >> 1) & 0xff;
+    this.setFlags(result === 0, false, false, carry === 1);
+    return result;
+  }
+
+  // Execute one CB-prefixed opcode.
+  private executeCB(opcode: number): void {
+    const slot = opcode & 0x07;        // which register (bits 0-2)
+    const value = this.readReg(slot);
+
+    if (opcode < 0x40) {
+      // Rotates/shifts: the operation is chosen by bits 3-5.
+      const op = (opcode >> 3) & 0x07;
+      let result = 0;
+
+      switch (op) {
+        case 0: result = this.rlc(value); break;
+        case 1: result = this.rrc(value); break;
+        case 2: result = this.rl(value); break;
+        case 3: result = this.rr(value); break;
+        case 4: result = this.sla(value); break;
+        case 5: result = this.sra(value); break;
+        case 6: result = this.swap(value); break;
+        case 7: result = this.srl(value); break;
+      }
+
+      this.writeReg(slot, result);
+      return;
+    }
+
+    // BIT / RES / SET : bit number = bits 3-5, operation = bits 6-7.
+    const bit = (opcode >> 3) & 0x07;
+
+    if (opcode < 0x80) {
+      // BIT b, r : test the bit, set Z accordingly. N=0, H=1. Carry untouched.
+      const isZero = (value & (1 << bit)) === 0;
+      this.setFlags(isZero, false, true, this.flagC);
+      return;
+    }
+
+    if (opcode < 0xc0) {
+      // RES b, r : clear the bit to 0. No flags change.
+      this.writeReg(slot, value & ~(1 << bit));
+      return;
+    }
+
+    // SET b, r : set the bit to 1. No flags change.
+    this.writeReg(slot, value | (1 << bit));
   }
 }
