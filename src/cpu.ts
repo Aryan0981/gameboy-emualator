@@ -239,6 +239,18 @@ export class CPU {
     return result;
   }
 
+  // --- 16-bit ADD helper (ADD HL, rr) ---
+  // Z is UNTOUCHED. N=0. H = carry out of bit 11. C = carry out of bit 15.
+  private addHL(value: number): void {
+    const result = this.hl + value;
+    const h = (this.hl & 0x0fff) + (value & 0x0fff) > 0x0fff;
+    const c = result > 0xffff;
+
+    // Preserve Z; set N=0, H, C.
+    this.setFlags(this.flagZ, false, h, c);
+    this.hl = result & 0xffff;
+  }
+
   // --- Control-flow helpers ---
 
   private jumpIf(condition: boolean): void {
@@ -530,6 +542,20 @@ export class CPU {
         break;
       case 0x3b: // DEC SP
         this.sp = (this.sp - 1) & 0xffff;
+        break;
+
+      // --- 16-bit ADD (ADD HL, rr) ---
+      case 0x09: // ADD HL, BC
+        this.addHL(this.bc);
+        break;
+      case 0x19: // ADD HL, DE
+        this.addHL(this.de);
+        break;
+      case 0x29: // ADD HL, HL
+        this.addHL(this.hl);
+        break;
+      case 0x39: // ADD HL, SP
+        this.addHL(this.sp);
         break;
 
       default:
