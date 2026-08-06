@@ -259,6 +259,34 @@ export class CPU {
     this.hl = result & 0xffff;
   }
 
+  // DAA: correct A back into binary-coded-decimal form after add/subtract.
+  // Uses the N flag (was it a subtraction?) and the H/C flags to decide corrections.
+  private daa(): void {
+    let a = this.a;
+    let correction = 0;
+    let setCarry = false;
+
+    if (!this.flagN) {
+      // After an addition:
+      if (this.flagH || (a & 0x0f) > 0x09) correction |= 0x06;
+      if (this.flagC || a > 0x99) {
+        correction |= 0x60;
+        setCarry = true;
+      }
+      a = (a + correction) & 0xff;
+    } else {
+      // After a subtraction:
+      if (this.flagH) correction |= 0x06;
+      if (this.flagC) correction |= 0x60;
+      a = (a - correction) & 0xff;
+      setCarry = this.flagC;
+    }
+
+    this.a = a;
+    // Z = result zero, N unchanged, H = 0 always, C per above.
+    this.setFlags(a === 0, this.flagN, false, setCarry);
+  }
+
   // --- Control-flow helpers ---
 
   private jumpIf(condition: boolean): void {
@@ -681,6 +709,14 @@ export class CPU {
         break;
       case 0x3f: // CCF : flip carry flag. N=0, H=0.
         this.setFlags(this.flagZ, false, false, !this.flagC);
+        break;
+
+      case 0x27: // DAA : adjust A into valid BCD after an add/subtract
+        this.daa();
+        break;
+
+      case 0x10: // STOP (stub: treat like NOP for now; consumes its extra byte)
+        this.fetch();
         break;
 
       // --- RST : fast call to a fixed low address ---
