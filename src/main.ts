@@ -1,4 +1,9 @@
 import { Memory } from "./memory";
+import { CPU } from "./cpu";
+import { Timer } from "./timer";
 
-const mem = new Memory();
-console.log("Game Boy memory bus ready:", mem);
+const memory = new Memory();
+const cpu = new CPU(memory);
+const timer = new Timer(memory);
+
+console.log("Game Boy CPU ready");

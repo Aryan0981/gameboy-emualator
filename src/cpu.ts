@@ -17,7 +17,9 @@ export class CPU {
   sp = 0;
   pc = 0;
 
-  interruptsEnabled = false;
+  interruptsEnabled = false; // IME: the master interrupt switch
+  private eiDelay = 0;       // EI enables interrupts AFTER the next instruction
+  private halted = false;    // HALT pauses the CPU until an interrupt is pending
 
   constructor(memory: Memory) {
     this.memory = memory;
@@ -311,16 +313,100 @@ export class CPU {
     }
   }
 
-  step(): void {
+  // T-cycle counts per main opcode (conditional branches use the "taken" value
+  // handled separately; this is the base/not-taken cost). Standard GB timings.
+  private static readonly CYCLES: number[] = [
+    4,12,8,8,4,4,8,4,20,8,8,8,4,4,8,4,
+    4,12,8,8,4,4,8,4,12,8,8,8,4,4,8,4,
+    8,12,8,8,4,4,8,4,8,8,8,8,4,4,8,4,
+    8,12,8,8,12,12,12,4,8,8,8,8,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    8,8,8,8,8,8,4,8,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    4,4,4,4,4,4,8,4,4,4,4,4,4,4,8,4,
+    8,12,12,16,12,16,8,16,8,16,12,4,12,24,8,16,
+    8,12,12,4,12,16,8,16,8,16,12,4,12,4,8,16,
+    12,12,8,4,4,16,8,16,16,4,16,4,4,4,8,16,
+    12,12,8,4,4,16,8,16,12,8,16,4,4,4,8,16,
+  ];
+
+  step(): number {
+    // If halted, stay paused (burning cycles) until any interrupt is pending.
+    if (this.halted) {
+      const ie = this.memory.read(0xffff);
+      const iff = this.memory.read(0xff0f);
+      if ((ie & iff & 0x1f) !== 0) {
+        this.halted = false; // an interrupt woke us up
+      } else {
+        return 4; // still asleep; consume 4 cycles so timers keep running
+      }
+    }
+
+    // 1) Before anything, see if a pending interrupt should be serviced.
+    //    If one is, THAT is this step's work -- we don't also run an instruction.
+    if (this.handleInterrupts()) {
+      return 20; // servicing an interrupt takes 20 T-cycles
+    }
+
+    // 2) Apply the delayed EI: when the counter runs out, turn IME on.
+    if (this.eiDelay > 0) {
+      this.eiDelay--;
+      if (this.eiDelay === 0) {
+        this.interruptsEnabled = true;
+      }
+    }
+
+    // 3) Fetch and run one instruction.
     const opcode = this.fetch();
 
     if (opcode === 0xcb) {
       const cbOpcode = this.fetch(); // the real instruction is the next byte
       this.executeCB(cbOpcode);
-      return;
+      // CB ops are 8 T-cycles, except (HL)-targeting ones which are 16.
+      return (cbOpcode & 0x07) === 6 ? 16 : 8;
     }
 
     this.execute(opcode);
+    return CPU.CYCLES[opcode];
+  }
+
+  // Request an interrupt by setting its bit in the IF register (0xFF0F).
+  // The timer, PPU, and joypad call this when their event happens.
+  requestInterrupt(bit: number): void {
+    const iff = this.memory.read(0xff0f);
+    this.memory.write(0xff0f, iff | (1 << bit));
+  }
+
+  // Check for a pending interrupt and, if allowed, jump to its handler.
+  private handleInterrupts(): boolean {
+    if (!this.interruptsEnabled) {
+      return false; // master switch is off
+    }
+
+    const ie = this.memory.read(0xffff); // which interrupts are ALLOWED
+    const iff = this.memory.read(0xff0f); // which interrupts are REQUESTING
+    const pending = ie & iff & 0x1f; // allowed AND requesting (5 bits)
+
+    if (pending === 0) {
+      return false; // nothing to service
+    }
+
+    // Find the highest-priority pending interrupt (lowest bit number wins).
+    for (let bit = 0; bit < 5; bit++) {
+      if (pending & (1 << bit)) {
+        this.interruptsEnabled = false; // handler must not be re-interrupted
+        this.memory.write(0xff0f, iff & ~(1 << bit)); // acknowledge: clear the bit
+        this.push16(this.pc); // save where we were
+        this.pc = 0x0040 + bit * 0x08; // jump to this interrupt's vector
+        return true;
+      }
+    }
+
+    return false;
   }
 
   private execute(opcode: number): void {
@@ -395,7 +481,8 @@ export class CPU {
         break; // NOP
 
       case 0x76:
-        break; // HALT (stub for now)
+        this.halted = true; // pause until an interrupt becomes pending
+        break;
 
       // LD rr, nn : load a 16-bit little-endian immediate into a register pair.
       case 0x01:
@@ -770,11 +857,12 @@ export class CPU {
       case 0xff: this.rst(0x38); break;
 
       // --- Interrupt enable/disable (stubbed; full behavior later) ---
-      case 0xf3: // DI : disable interrupts
+      case 0xf3: // DI : disable interrupts immediately
         this.interruptsEnabled = false;
+        this.eiDelay = 0;
         break;
-      case 0xfb: // EI : enable interrupts
-        this.interruptsEnabled = true;
+      case 0xfb: // EI : enable interrupts AFTER the next instruction runs
+        this.eiDelay = 2; // counts down; IME turns on when it reaches 0
         break;
 
       default:
