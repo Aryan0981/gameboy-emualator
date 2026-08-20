@@ -17,9 +17,9 @@ export class CPU {
   sp = 0;
   pc = 0;
 
-  interruptsEnabled = false; // IME: the master interrupt switch
-  private eiDelay = 0;       // EI enables interrupts AFTER the next instruction
-  private halted = false;    // HALT pauses the CPU until an interrupt is pending
+  interruptsEnabled = false; 
+  private eiDelay = 0;       
+  private halted = false;    
 
   constructor(memory: Memory) {
     this.memory = memory;
@@ -55,7 +55,7 @@ export class CPU {
   }
   set af(v: number) {
     this.a = (v >> 8) & 0xff;
-    this.f = v & 0xf0; // low nibble of F is always 0
+    this.f = v & 0xf0; 
   }
 
   // --- Flags (bits inside register F) ---
@@ -96,7 +96,7 @@ export class CPU {
       case 5:
         return this.l;
       case 6:
-        return this.memory.read(this.hl); // (HL): memory, not a register
+        return this.memory.read(this.hl); 
       case 7:
         return this.a;
       default:
@@ -127,7 +127,7 @@ export class CPU {
         this.l = value;
         break;
       case 6:
-        this.memory.write(this.hl, value); // (HL)
+        this.memory.write(this.hl, value); 
         break;
       case 7:
         this.a = value;
@@ -150,15 +150,13 @@ export class CPU {
   }
 
   // --- The stack lives in memory and grows DOWNWARD. ---
-  // Push: move SP down by 2, then store the 16-bit value (high byte first).
-  private push16(value: number): void {
+    private push16(value: number): void {
     this.sp = (this.sp - 1) & 0xffff;
-    this.memory.write(this.sp, (value >> 8) & 0xff); // high byte
+    this.memory.write(this.sp, (value >> 8) & 0xff); 
     this.sp = (this.sp - 1) & 0xffff;
-    this.memory.write(this.sp, value & 0xff); // low byte
+    this.memory.write(this.sp, value & 0xff); 
   }
 
-  // Pop: read the 16-bit value (low byte first), then move SP up by 2.
   private pop16(): number {
     const low = this.memory.read(this.sp);
     this.sp = (this.sp + 1) & 0xffff;
@@ -172,14 +170,12 @@ export class CPU {
     return byte < 0x80 ? byte : byte - 0x100;
   }
 
-  // RST: push current pc, then jump to a fixed low address.
   private rst(address: number): void {
     this.push16(this.pc);
     this.pc = address;
   }
 
   // --- ALU operations on register A. Each sets flags per Game Boy rules. ---
-
   private addA(value: number, withCarry: boolean = false): void {
     const carryIn = withCarry && this.flagC ? 1 : 0;
     const result = this.a + value + carryIn;
@@ -206,7 +202,7 @@ export class CPU {
 
   private andA(value: number): void {
     this.a = this.a & value;
-    this.setFlags(this.a === 0, false, true, false); // H is always set for AND
+    this.setFlags(this.a === 0, false, true, false); 
   }
 
   private orA(value: number): void {
@@ -219,7 +215,6 @@ export class CPU {
     this.setFlags(this.a === 0, false, false, false);
   }
 
-  // CP = compare: subtract but DISCARD the result, keeping only the flags.
   private cpA(value: number): void {
     const result = this.a - value;
 
@@ -231,45 +226,37 @@ export class CPU {
   }
 
   // --- INC/DEC helpers ---
-
-  // 8-bit increment: sets Z, N=0, H; leaves Carry UNTOUCHED.
   private inc8(value: number): number {
     const result = (value + 1) & 0xff;
     const h = (value & 0x0f) + 1 > 0x0f;
-    // Preserve the existing carry flag; only Z, N, H change.
     this.setFlags(result === 0, false, h, this.flagC);
     return result;
   }
 
-  // 8-bit decrement: sets Z, N=1, H; leaves Carry UNTOUCHED.
+  // 8-bit decrement
   private dec8(value: number): number {
     const result = (value - 1) & 0xff;
-    const h = (value & 0x0f) === 0; // borrow out of the low nibble
+    const h = (value & 0x0f) === 0; 
     this.setFlags(result === 0, true, h, this.flagC);
     return result;
   }
 
   // --- 16-bit ADD helper (ADD HL, rr) ---
-  // Z is UNTOUCHED. N=0. H = carry out of bit 11. C = carry out of bit 15.
   private addHL(value: number): void {
     const result = this.hl + value;
     const h = (this.hl & 0x0fff) + (value & 0x0fff) > 0x0fff;
     const c = result > 0xffff;
 
-    // Preserve Z; set N=0, H, C.
     this.setFlags(this.flagZ, false, h, c);
     this.hl = result & 0xffff;
   }
 
-  // DAA: correct A back into binary-coded-decimal form after add/subtract.
-  // Uses the N flag (was it a subtraction?) and the H/C flags to decide corrections.
   private daa(): void {
     let a = this.a;
     let correction = 0;
     let setCarry = false;
 
     if (!this.flagN) {
-      // After an addition:
       if (this.flagH || (a & 0x0f) > 0x09) correction |= 0x06;
       if (this.flagC || a > 0x99) {
         correction |= 0x60;
@@ -277,7 +264,6 @@ export class CPU {
       }
       a = (a + correction) & 0xff;
     } else {
-      // After a subtraction:
       if (this.flagH) correction |= 0x06;
       if (this.flagC) correction |= 0x60;
       a = (a - correction) & 0xff;
@@ -285,21 +271,19 @@ export class CPU {
     }
 
     this.a = a;
-    // Z = result zero, N unchanged, H = 0 always, C per above.
     this.setFlags(a === 0, this.flagN, false, setCarry);
   }
 
   // --- Control-flow helpers ---
-
   private jumpIf(condition: boolean): void {
-    const address = this.fetch16(); // always read the operand, even if not taken
+    const address = this.fetch16(); 
     if (condition) {
       this.pc = address;
     }
   }
 
   private jumpRelativeIf(condition: boolean): void {
-    const offset = this.toSigned(this.fetch()); // signed offset
+    const offset = this.toSigned(this.fetch()); 
     if (condition) {
       this.pc = (this.pc + offset) & 0xffff;
     }
@@ -308,13 +292,11 @@ export class CPU {
   private callIf(condition: boolean): void {
     const address = this.fetch16();
     if (condition) {
-      this.push16(this.pc); // save where to come back to
+      this.push16(this.pc);
       this.pc = address;
     }
   }
 
-  // T-cycle counts per main opcode (conditional branches use the "taken" value
-  // handled separately; this is the base/not-taken cost). Standard GB timings.
   private static readonly CYCLES: number[] = [
     4,12,8,8,4,4,8,4,20,8,8,8,4,4,8,4,
     4,12,8,8,4,4,8,4,12,8,8,8,4,4,8,4,
@@ -335,24 +317,20 @@ export class CPU {
   ];
 
   step(): number {
-    // If halted, stay paused (burning cycles) until any interrupt is pending.
     if (this.halted) {
       const ie = this.memory.read(0xffff);
       const iff = this.memory.read(0xff0f);
       if ((ie & iff & 0x1f) !== 0) {
-        this.halted = false; // an interrupt woke us up
+        this.halted = false;
       } else {
-        return 4; // still asleep; consume 4 cycles so timers keep running
+        return 4; 
       }
     }
 
-    // 1) Before anything, see if a pending interrupt should be serviced.
-    //    If one is, THAT is this step's work -- we don't also run an instruction.
     if (this.handleInterrupts()) {
-      return 20; // servicing an interrupt takes 20 T-cycles
+      return 20; 
     }
 
-    // 2) Apply the delayed EI: when the counter runs out, turn IME on.
     if (this.eiDelay > 0) {
       this.eiDelay--;
       if (this.eiDelay === 0) {
@@ -360,13 +338,11 @@ export class CPU {
       }
     }
 
-    // 3) Fetch and run one instruction.
     const opcode = this.fetch();
 
     if (opcode === 0xcb) {
-      const cbOpcode = this.fetch(); // the real instruction is the next byte
+      const cbOpcode = this.fetch(); 
       this.executeCB(cbOpcode);
-      // CB ops are 8 T-cycles, except (HL)-targeting ones which are 16.
       return (cbOpcode & 0x07) === 6 ? 16 : 8;
     }
 
@@ -374,34 +350,30 @@ export class CPU {
     return CPU.CYCLES[opcode];
   }
 
-  // Request an interrupt by setting its bit in the IF register (0xFF0F).
-  // The timer, PPU, and joypad call this when their event happens.
   requestInterrupt(bit: number): void {
     const iff = this.memory.read(0xff0f);
     this.memory.write(0xff0f, iff | (1 << bit));
   }
 
-  // Check for a pending interrupt and, if allowed, jump to its handler.
   private handleInterrupts(): boolean {
     if (!this.interruptsEnabled) {
-      return false; // master switch is off
+      return false; 
     }
 
-    const ie = this.memory.read(0xffff); // which interrupts are ALLOWED
-    const iff = this.memory.read(0xff0f); // which interrupts are REQUESTING
-    const pending = ie & iff & 0x1f; // allowed AND requesting (5 bits)
+    const ie = this.memory.read(0xffff); 
+    const iff = this.memory.read(0xff0f); 
+    const pending = ie & iff & 0x1f; 
 
     if (pending === 0) {
-      return false; // nothing to service
+      return false; 
     }
 
-    // Find the highest-priority pending interrupt (lowest bit number wins).
     for (let bit = 0; bit < 5; bit++) {
       if (pending & (1 << bit)) {
-        this.interruptsEnabled = false; // handler must not be re-interrupted
-        this.memory.write(0xff0f, iff & ~(1 << bit)); // acknowledge: clear the bit
-        this.push16(this.pc); // save where we were
-        this.pc = 0x0040 + bit * 0x08; // jump to this interrupt's vector
+        this.interruptsEnabled = false;
+        this.memory.write(0xff0f, iff & ~(1 << bit)); 
+        this.push16(this.pc); 
+        this.pc = 0x0040 + bit * 0x08; 
         return true;
       }
     }
@@ -410,9 +382,6 @@ export class CPU {
   }
 
   private execute(opcode: number): void {
-    // LD r, r' : opcodes 0x40-0x7F copy one register into another.
-    // Destination = bits 3-5, source = bits 0-2.
-    // Exception: 0x76 is HALT, not "LD (HL),(HL)".
     if (opcode >= 0x40 && opcode <= 0x7f && opcode !== 0x76) {
       const dest = (opcode >> 3) & 0x07;
       const src = opcode & 0x07;
@@ -421,7 +390,6 @@ export class CPU {
       return;
     }
 
-    // LD r, n : load the next byte (immediate) into a register. Dest = bits 3-5.
     if (
       opcode === 0x06 ||
       opcode === 0x0e ||
@@ -433,15 +401,12 @@ export class CPU {
       opcode === 0x3e
     ) {
       const dest = (opcode >> 3) & 0x07;
-      const value = this.fetch(); // the immediate byte follows the opcode
+      const value = this.fetch(); 
 
       this.writeReg(dest, value);
       return;
     }
 
-    // ALU on A: opcodes 0x80-0xBF. Source register = bits 0-2.
-    // The operation is chosen by bits 3-5:
-    //   0=ADD 1=ADC 2=SUB 3=SBC 4=AND 5=XOR 6=OR 7=CP
     if (opcode >= 0x80 && opcode <= 0xbf) {
       const src = opcode & 0x07;
       const value = this.readReg(src);
@@ -478,35 +443,33 @@ export class CPU {
 
     switch (opcode) {
       case 0x00:
-        break; // NOP
+        break; 
 
       case 0x76:
-        this.halted = true; // pause until an interrupt becomes pending
+        this.halted = true; 
         break;
 
-      // LD rr, nn : load a 16-bit little-endian immediate into a register pair.
       case 0x01:
-        this.bc = this.fetch16(); // LD BC, nn
+        this.bc = this.fetch16(); 
         break;
       case 0x11:
-        this.de = this.fetch16(); // LD DE, nn
+        this.de = this.fetch16(); 
         break;
       case 0x21:
-        this.hl = this.fetch16(); // LD HL, nn
+        this.hl = this.fetch16(); 
         break;
       case 0x31:
-        this.sp = this.fetch16(); // LD SP, nn
+        this.sp = this.fetch16(); 
         break;
 
-      case 0xf9: // LD SP, HL : copy the whole HL pair into the stack pointer
+      case 0xf9: 
         this.sp = this.hl;
         break;
 
-      case 0xe8: // ADD SP, n : add a SIGNED byte to SP. Z=0, N=0; H/C from the LOW byte.
+      case 0xe8: 
         {
           const offset = this.toSigned(this.fetch());
           const result = (this.sp + offset) & 0xffff;
-          // Half-carry and carry are computed on the low byte, as unsigned adds.
           const h = ((this.sp & 0x0f) + (offset & 0x0f)) > 0x0f;
           const c = ((this.sp & 0xff) + (offset & 0xff)) > 0xff;
           this.setFlags(false, false, h, c);
@@ -514,7 +477,7 @@ export class CPU {
         }
         break;
 
-      case 0xf8: // LD HL, SP+n : HL = SP + signed byte. Same flag rules as ADD SP,n.
+      case 0xf8:
         {
           const offset = this.toSigned(this.fetch());
           const result = (this.sp + offset) & 0xffff;
@@ -525,324 +488,324 @@ export class CPU {
         }
         break;
 
-      case 0x08: // LD (nn), SP : store SP to a direct address, low byte first
+      case 0x08: 
         {
           const address = this.fetch16();
-          this.memory.write(address, this.sp & 0xff); // low byte
-          this.memory.write((address + 1) & 0xffff, (this.sp >> 8) & 0xff); // high byte
+          this.memory.write(address, this.sp & 0xff); 
+          this.memory.write((address + 1) & 0xffff, (this.sp >> 8) & 0xff); 
         }
         break;
 
       // --- Jumps ---
-      case 0xc3: // JP nn : jump to a 16-bit address
+      case 0xc3: 
         this.pc = this.fetch16();
         break;
 
-      case 0xc2: // JP NZ, nn : jump if Zero flag is CLEAR
+      case 0xc2: 
         this.jumpIf(!this.flagZ);
         break;
-      case 0xca: // JP Z, nn : jump if Zero flag is SET
+      case 0xca:
         this.jumpIf(this.flagZ);
         break;
-      case 0xd2: // JP NC, nn : jump if Carry flag is CLEAR
+      case 0xd2: 
         this.jumpIf(!this.flagC);
         break;
-      case 0xda: // JP C, nn : jump if Carry flag is SET
+      case 0xda: 
         this.jumpIf(this.flagC);
         break;
 
-      case 0xe9: // JP (HL) : jump to the address in HL
+      case 0xe9: 
         this.pc = this.hl;
         break;
 
       // --- Relative jumps (signed offset from current position) ---
-      case 0x18: // JR n
+      case 0x18: 
         this.jumpRelativeIf(true);
         break;
-      case 0x20: // JR NZ, n
+      case 0x20: 
         this.jumpRelativeIf(!this.flagZ);
         break;
-      case 0x28: // JR Z, n
+      case 0x28: 
         this.jumpRelativeIf(this.flagZ);
         break;
-      case 0x30: // JR NC, n
+      case 0x30: 
         this.jumpRelativeIf(!this.flagC);
         break;
-      case 0x38: // JR C, n
+      case 0x38: 
         this.jumpRelativeIf(this.flagC);
         break;
 
       // --- Calls and returns (use the stack) ---
-      case 0xcd: // CALL nn
+      case 0xcd: 
         this.callIf(true);
         break;
-      case 0xc4: // CALL NZ, nn
+      case 0xc4: 
         this.callIf(!this.flagZ);
         break;
-      case 0xcc: // CALL Z, nn
+      case 0xcc: 
         this.callIf(this.flagZ);
         break;
-      case 0xd4: // CALL NC, nn
+      case 0xd4: 
         this.callIf(!this.flagC);
         break;
-      case 0xdc: // CALL C, nn
+      case 0xdc: 
         this.callIf(this.flagC);
         break;
 
-      case 0xc9: // RET : pop return address off the stack
+      case 0xc9: 
         this.pc = this.pop16();
         break;
 
-      case 0xd9: // RETI : return, then re-enable interrupts
+      case 0xd9: 
         this.pc = this.pop16();
         this.interruptsEnabled = true;
         break;
-      case 0xc0: // RET NZ
+      case 0xc0: 
         if (!this.flagZ) this.pc = this.pop16();
         break;
-      case 0xc8: // RET Z
+      case 0xc8: 
         if (this.flagZ) this.pc = this.pop16();
         break;
-      case 0xd0: // RET NC
+      case 0xd0: 
         if (!this.flagC) this.pc = this.pop16();
         break;
-      case 0xd8: // RET C
+      case 0xd8:
         if (this.flagC) this.pc = this.pop16();
         break;
 
       // --- Stack push/pop of register pairs ---
-      case 0xc5: // PUSH BC
+      case 0xc5:
         this.push16(this.bc);
         break;
-      case 0xd5: // PUSH DE
+      case 0xd5: 
         this.push16(this.de);
         break;
-      case 0xe5: // PUSH HL
+      case 0xe5:
         this.push16(this.hl);
         break;
-      case 0xf5: // PUSH AF
+      case 0xf5: 
         this.push16(this.af);
         break;
-      case 0xc1: // POP BC
+      case 0xc1: 
         this.bc = this.pop16();
         break;
-      case 0xd1: // POP DE
+      case 0xd1:
         this.de = this.pop16();
         break;
-      case 0xe1: // POP HL
+      case 0xe1: 
         this.hl = this.pop16();
         break;
-      case 0xf1: // POP AF
+      case 0xf1: 
         this.af = this.pop16();
         break;
 
       // --- 8-bit INC (dest = bits 3-5) ---
-      case 0x04: // INC B
+      case 0x04: 
         this.b = this.inc8(this.b);
         break;
-      case 0x0c: // INC C
+      case 0x0c: 
         this.c = this.inc8(this.c);
         break;
-      case 0x14: // INC D
+      case 0x14: 
         this.d = this.inc8(this.d);
         break;
-      case 0x1c: // INC E
+      case 0x1c: 
         this.e = this.inc8(this.e);
         break;
-      case 0x24: // INC H
+      case 0x24: 
         this.h = this.inc8(this.h);
         break;
-      case 0x2c: // INC L
+      case 0x2c: 
         this.l = this.inc8(this.l);
         break;
-      case 0x34: // INC (HL)
+      case 0x34: 
         this.memory.write(this.hl, this.inc8(this.memory.read(this.hl)));
         break;
-      case 0x3c: // INC A
+      case 0x3c: 
         this.a = this.inc8(this.a);
         break;
 
       // --- 8-bit DEC ---
-      case 0x05: // DEC B
+      case 0x05: 
         this.b = this.dec8(this.b);
         break;
-      case 0x0d: // DEC C
+      case 0x0d: 
         this.c = this.dec8(this.c);
         break;
-      case 0x15: // DEC D
+      case 0x15: 
         this.d = this.dec8(this.d);
         break;
-      case 0x1d: // DEC E
+      case 0x1d: 
         this.e = this.dec8(this.e);
         break;
-      case 0x25: // DEC H
+      case 0x25: 
         this.h = this.dec8(this.h);
         break;
-      case 0x2d: // DEC L
+      case 0x2d: 
         this.l = this.dec8(this.l);
         break;
-      case 0x35: // DEC (HL)
+      case 0x35: 
         this.memory.write(this.hl, this.dec8(this.memory.read(this.hl)));
         break;
-      case 0x3d: // DEC A
+      case 0x3d: 
         this.a = this.dec8(this.a);
         break;
 
       // --- 16-bit INC/DEC : NO flags are affected ---
-      case 0x03: // INC BC
+      case 0x03: 
         this.bc = (this.bc + 1) & 0xffff;
         break;
-      case 0x13: // INC DE
+      case 0x13: 
         this.de = (this.de + 1) & 0xffff;
         break;
-      case 0x23: // INC HL
+      case 0x23: 
         this.hl = (this.hl + 1) & 0xffff;
         break;
-      case 0x33: // INC SP
+      case 0x33: 
         this.sp = (this.sp + 1) & 0xffff;
         break;
-      case 0x0b: // DEC BC
+      case 0x0b: 
         this.bc = (this.bc - 1) & 0xffff;
         break;
-      case 0x1b: // DEC DE
+      case 0x1b: 
         this.de = (this.de - 1) & 0xffff;
         break;
-      case 0x2b: // DEC HL
+      case 0x2b: 
         this.hl = (this.hl - 1) & 0xffff;
         break;
-      case 0x3b: // DEC SP
+      case 0x3b:
         this.sp = (this.sp - 1) & 0xffff;
         break;
 
       // --- 16-bit ADD (ADD HL, rr) ---
-      case 0x09: // ADD HL, BC
+      case 0x09:
         this.addHL(this.bc);
         break;
-      case 0x19: // ADD HL, DE
+      case 0x19: 
         this.addHL(this.de);
         break;
-      case 0x29: // ADD HL, HL
+      case 0x29: 
         this.addHL(this.hl);
         break;
-      case 0x39: // ADD HL, SP
+      case 0x39: 
         this.addHL(this.sp);
         break;
 
       // --- Immediate ALU (operate A with the next byte) ---
-      case 0xc6: // ADD A, n
+      case 0xc6: 
         this.addA(this.fetch());
         break;
-      case 0xce: // ADC A, n
+      case 0xce: 
         this.addA(this.fetch(), true);
         break;
-      case 0xd6: // SUB A, n
+      case 0xd6: 
         this.subA(this.fetch());
         break;
-      case 0xde: // SBC A, n
+      case 0xde: 
         this.subA(this.fetch(), true);
         break;
-      case 0xe6: // AND n
+      case 0xe6: 
         this.andA(this.fetch());
         break;
-      case 0xf6: // OR n
+      case 0xf6: 
         this.orA(this.fetch());
         break;
-      case 0xee: // XOR n
+      case 0xee: 
         this.xorA(this.fetch());
         break;
-      case 0xfe: // CP n
+      case 0xfe: 
         this.cpA(this.fetch());
         break;
 
       // --- Loads to/from A at an address in a register pair ---
-      case 0x02: // LD (BC), A
+      case 0x02:
         this.memory.write(this.bc, this.a);
         break;
-      case 0x12: // LD (DE), A
+      case 0x12: 
         this.memory.write(this.de, this.a);
         break;
-      case 0x0a: // LD A, (BC)
+      case 0x0a:
         this.a = this.memory.read(this.bc);
         break;
-      case 0x1a: // LD A, (DE)
+      case 0x1a: 
         this.a = this.memory.read(this.de);
         break;
 
       // --- HL auto-increment / auto-decrement loads ---
-      case 0x22: // LD (HL+), A  -- store A, then HL++
+      case 0x22: 
         this.memory.write(this.hl, this.a);
         this.hl = (this.hl + 1) & 0xffff;
         break;
-      case 0x32: // LD (HL-), A  -- store A, then HL--
+      case 0x32: 
         this.memory.write(this.hl, this.a);
         this.hl = (this.hl - 1) & 0xffff;
         break;
-      case 0x2a: // LD A, (HL+)  -- load A, then HL++
+      case 0x2a: 
         this.a = this.memory.read(this.hl);
         this.hl = (this.hl + 1) & 0xffff;
         break;
-      case 0x3a: // LD A, (HL-)  -- load A, then HL--
+      case 0x3a: 
         this.a = this.memory.read(this.hl);
         this.hl = (this.hl - 1) & 0xffff;
         break;
 
       // --- Direct-address loads (16-bit address in the instruction) ---
-      case 0xea: // LD (nn), A
+      case 0xea: 
         this.memory.write(this.fetch16(), this.a);
         break;
-      case 0xfa: // LD A, (nn)
+      case 0xfa: 
         this.a = this.memory.read(this.fetch16());
         break;
 
       // --- High-memory (0xFF00+) loads: talk to I/O hardware ---
-      case 0xe0: // LDH (n), A  -- write A to 0xFF00 + n
+      case 0xe0: 
         this.memory.write(0xff00 + this.fetch(), this.a);
         break;
-      case 0xf0: // LDH A, (n)  -- read from 0xFF00 + n into A
+      case 0xf0: 
         this.a = this.memory.read(0xff00 + this.fetch());
         break;
-      case 0xe2: // LD (C), A  -- write A to 0xFF00 + C
+      case 0xe2: 
         this.memory.write(0xff00 + this.c, this.a);
         break;
-      case 0xf2: // LD A, (C)  -- read from 0xFF00 + C into A
+      case 0xf2: 
         this.a = this.memory.read(0xff00 + this.c);
         break;
 
       // --- Accumulator rotates (like CB rotates but on A; Z is always 0 here) ---
-      case 0x07: // RLCA
+      case 0x07: 
         this.a = this.rlc(this.a);
         this.setFlags(false, false, false, this.flagC);
         break;
-      case 0x0f: // RRCA
+      case 0x0f: 
         this.a = this.rrc(this.a);
         this.setFlags(false, false, false, this.flagC);
         break;
-      case 0x17: // RLA
+      case 0x17:
         this.a = this.rl(this.a);
         this.setFlags(false, false, false, this.flagC);
         break;
-      case 0x1f: // RRA
+      case 0x1f: 
         this.a = this.rr(this.a);
         this.setFlags(false, false, false, this.flagC);
         break;
 
       // --- Flag / accumulator oddballs ---
-      case 0x2f: // CPL : flip all bits of A. N=1, H=1.
+      case 0x2f: 
         this.a = (~this.a) & 0xff;
         this.setFlags(this.flagZ, true, true, this.flagC);
         break;
-      case 0x37: // SCF : set carry flag. N=0, H=0.
+      case 0x37: 
         this.setFlags(this.flagZ, false, false, true);
         break;
-      case 0x3f: // CCF : flip carry flag. N=0, H=0.
+      case 0x3f: 
         this.setFlags(this.flagZ, false, false, !this.flagC);
         break;
 
-      case 0x27: // DAA : adjust A into valid BCD after an add/subtract
+      case 0x27: 
         this.daa();
         break;
 
-      case 0x10: // STOP (stub: treat like NOP for now; consumes its extra byte)
+      case 0x10: 
         this.fetch();
         break;
 
@@ -857,12 +820,12 @@ export class CPU {
       case 0xff: this.rst(0x38); break;
 
       // --- Interrupt enable/disable (stubbed; full behavior later) ---
-      case 0xf3: // DI : disable interrupts immediately
+      case 0xf3:
         this.interruptsEnabled = false;
         this.eiDelay = 0;
         break;
-      case 0xfb: // EI : enable interrupts AFTER the next instruction runs
-        this.eiDelay = 2; // counts down; IME turns on when it reaches 0
+      case 0xfb:
+        this.eiDelay = 2; 
         break;
 
       default:
@@ -871,71 +834,66 @@ export class CPU {
   }
 
   // --- Rotate/shift helpers (each returns the result and sets flags) ---
-  // For all of these on the Game Boy: N=0, H=0. Z = result is zero.
-  // C receives the bit that was shifted out.
-
-  private rlc(v: number): number { // rotate left, old bit 7 -> carry AND bit 0
+  private rlc(v: number): number { 
     const carry = (v >> 7) & 1;
     const result = ((v << 1) | carry) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private rrc(v: number): number { // rotate right, old bit 0 -> carry AND bit 7
+  private rrc(v: number): number { 
     const carry = v & 1;
     const result = ((v >> 1) | (carry << 7)) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private rl(v: number): number { // rotate left THROUGH carry
+  private rl(v: number): number {
     const carry = (v >> 7) & 1;
     const result = ((v << 1) | (this.flagC ? 1 : 0)) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private rr(v: number): number { // rotate right THROUGH carry
+  private rr(v: number): number { 
     const carry = v & 1;
     const result = ((v >> 1) | (this.flagC ? 0x80 : 0)) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private sla(v: number): number { // shift left, 0 into bit 0
+  private sla(v: number): number { 
     const carry = (v >> 7) & 1;
     const result = (v << 1) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private sra(v: number): number { // shift right, bit 7 stays (arithmetic)
+  private sra(v: number): number { 
     const carry = v & 1;
     const result = ((v >> 1) | (v & 0x80)) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  private swap(v: number): number { // swap the two nibbles
+  private swap(v: number): number { 
     const result = ((v & 0x0f) << 4) | ((v & 0xf0) >> 4);
-    this.setFlags(result === 0, false, false, false); // C=0 for SWAP
+    this.setFlags(result === 0, false, false, false); 
     return result;
   }
 
-  private srl(v: number): number { // shift right, 0 into bit 7 (logical)
+  private srl(v: number): number { 
     const carry = v & 1;
     const result = (v >> 1) & 0xff;
     this.setFlags(result === 0, false, false, carry === 1);
     return result;
   }
 
-  // Execute one CB-prefixed opcode.
   private executeCB(opcode: number): void {
-    const slot = opcode & 0x07;        // which register (bits 0-2)
+    const slot = opcode & 0x07;       
     const value = this.readReg(slot);
 
     if (opcode < 0x40) {
-      // Rotates/shifts: the operation is chosen by bits 3-5.
       const op = (opcode >> 3) & 0x07;
       let result = 0;
 
@@ -954,23 +912,19 @@ export class CPU {
       return;
     }
 
-    // BIT / RES / SET : bit number = bits 3-5, operation = bits 6-7.
     const bit = (opcode >> 3) & 0x07;
 
     if (opcode < 0x80) {
-      // BIT b, r : test the bit, set Z accordingly. N=0, H=1. Carry untouched.
       const isZero = (value & (1 << bit)) === 0;
       this.setFlags(isZero, false, true, this.flagC);
       return;
     }
 
     if (opcode < 0xc0) {
-      // RES b, r : clear the bit to 0. No flags change.
       this.writeReg(slot, value & ~(1 << bit));
       return;
     }
 
-    // SET b, r : set the bit to 1. No flags change.
     this.writeReg(slot, value | (1 << bit));
   }
 }

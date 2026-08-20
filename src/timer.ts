@@ -3,8 +3,8 @@ import { Memory } from "./memory";
 export class Timer {
   private memory: Memory;
 
-  private divCounter = 0; // internal cycle accumulator for DIV
-  private timaCounter = 0; // internal cycle accumulator for TIMA
+  private divCounter = 0; 
+  private timaCounter = 0; 
 
   private static readonly RATES = [1024, 16, 64, 256];
 
@@ -12,7 +12,6 @@ export class Timer {
     this.memory = memory;
   }
 
-  // Advance the timer by the number of cycles the last instruction took.
   step(cycles: number): void {
     this.divCounter += cycles;
     while (this.divCounter >= 256) {
@@ -22,7 +21,7 @@ export class Timer {
     }
 
     const tac = this.memory.read(0xff07);
-    const enabled = (tac & 0x04) !== 0; // bit 2 turns the timer on
+    const enabled = (tac & 0x04) !== 0; 
     if (!enabled) {
       return;
     }

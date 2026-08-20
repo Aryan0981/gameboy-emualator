@@ -8,7 +8,7 @@ const MODE_DRAW = 3;
 
 const CYCLES_PER_LINE = 456;
 const OAM_CYCLES = 80;          
-const DRAW_CYCLES = 172;        
+const DRAW_CYCLES = 172;       
 
 const VISIBLE_LINES = 144; 
 const TOTAL_LINES = 154;   
@@ -19,6 +19,9 @@ export class PPU {
 
   private modeClock = 0; 
   private mode = MODE_OAM;
+
+  readonly framebuffer = new Uint8Array(160 * 144);
+  frameReady = false; 
 
   constructor(memory: Memory, cpu: CPU) {
     this.memory = memory;
@@ -54,6 +57,7 @@ export class PPU {
         if (this.modeClock >= DRAW_CYCLES) {
           this.modeClock -= DRAW_CYCLES;
           this.setMode(MODE_HBLANK);
+          this.renderScanline(); 
         }
         break;
 
@@ -64,9 +68,10 @@ export class PPU {
 
           if (this.ly === VISIBLE_LINES) {
             this.setMode(MODE_VBLANK);
+            this.frameReady = true; 
             this.cpu.requestInterrupt(0); 
           } else {
-            this.setMode(MODE_OAM);
+            this.setMode(MODE_OAM); 
           }
         }
         break;
@@ -82,6 +87,66 @@ export class PPU {
           }
         }
         break;
+    }
+  }
+  
+  private renderScanline(): void {
+    const lcdc = this.memory.read(0xff40);
+
+    const lcdOn = (lcdc & 0x80) !== 0;
+    const bgOn = (lcdc & 0x01) !== 0;
+
+    const line = this.ly;
+    if (line >= VISIBLE_LINES) {
+      return;
+    }
+
+    if (!lcdOn || !bgOn) {
+      for (let x = 0; x < 160; x++) {
+        this.framebuffer[line * 160 + x] = 0;
+      }
+      return;
+    }
+
+    const mapBase = (lcdc & 0x08) !== 0 ? 0x9c00 : 0x9800;
+    const dataBase = (lcdc & 0x10) !== 0 ? 0x8000 : 0x9000;
+    const signedIndex = (lcdc & 0x10) === 0;
+
+    const scy = this.memory.read(0xff42);
+    const scx = this.memory.read(0xff43);
+    const palette = this.memory.read(0xff47);
+
+    const bgY = (line + scy) & 0xff;
+    const tileRow = bgY >> 3;
+    const pixelRowInTile = bgY & 7;
+
+    for (let x = 0; x < 160; x++) {
+      const bgX = (x + scx) & 0xff;
+      const tileCol = bgX >> 3;
+      const pixelColInTile = bgX & 7;
+
+      const mapIndex = tileRow * 32 + tileCol;
+      const tileNumber = this.memory.read(mapBase + mapIndex);
+
+      let tileAddress: number;
+      if (signedIndex) {
+        const signed = tileNumber < 0x80 ? tileNumber : tileNumber - 0x100;
+        tileAddress = dataBase + signed * 16;
+      } else {
+        tileAddress = dataBase + tileNumber * 16;
+      }
+
+      const lowByte = this.memory.read(tileAddress + pixelRowInTile * 2);
+      const highByte = this.memory.read(tileAddress + pixelRowInTile * 2 + 1);
+
+      const bitPosition = 7 - pixelColInTile;
+      const lowBit = (lowByte >> bitPosition) & 1;
+      const highBit = (highByte >> bitPosition) & 1;
+      const colorNumber = (highBit << 1) | lowBit;
+
+      const shade = (palette >> (colorNumber * 2)) & 0x03;
+
+      this.framebuffer[line * 160 + x] = shade;
     }
   }
 }
