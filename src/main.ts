@@ -3,12 +3,13 @@ import { CPU } from "./cpu";
 import { Timer } from "./timer";
 import { PPU } from "./ppu";
 import { Joypad } from "./joypad";
+import { APU } from "./apu";
 
 const WIDTH = 160;
 const HEIGHT = 144;
 const SCALE = 4;
 
-// Screen: 160x144 canvas scaled up 4x
+// Screen: a 160x144 canvas scaled up 4x
 const canvas = document.createElement("canvas");
 canvas.width = WIDTH * SCALE;
 canvas.height = HEIGHT * SCALE;
@@ -40,7 +41,13 @@ let memory: Memory;
 let cpu: CPU;
 let timer: Timer;
 let ppu: PPU;
+let apu: APU;
 let running = false;
+
+// Web Audio setup: pull samples from the APU on demand
+let audioCtx: AudioContext | null = null;
+const SAMPLE_RATE = 44100;
+const CPU_HZ = 4194304;
 
 // Keyboard -> Game Boy buttons
 const joypad = new Joypad();
@@ -74,6 +81,20 @@ window.addEventListener("keyup", (e) => {
 
 const CYCLES_PER_FRAME = 70224;
 
+// Feed APU samples to the speakers via Web Audio
+function setupAudio(): void {
+  if (audioCtx) return; // set up once
+  audioCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+  const node = audioCtx.createScriptProcessor(2048, 0, 1);
+  const cyclesPerSample = CPU_HZ / SAMPLE_RATE;
+  node.onaudioprocess = (e) => {
+    const out = e.outputBuffer.getChannelData(0);
+    const samples = apu.generateSamples(out.length, cyclesPerSample);
+    out.set(samples);
+  };
+  node.connect(audioCtx.destination);
+}
+
 // Set up a fresh emulator for a loaded ROM and start running
 function bootEmulator(rom: Uint8Array): void {
   memory = new Memory();
@@ -82,6 +103,8 @@ function bootEmulator(rom: Uint8Array): void {
   cpu = new CPU(memory);
   timer = new Timer(memory);
   ppu = new PPU(memory, cpu);
+  apu = new APU(memory);
+  setupAudio();
 
   // Register state as it would be right after the boot ROM runs
   cpu.a = 0x01; cpu.f = 0xb0;
