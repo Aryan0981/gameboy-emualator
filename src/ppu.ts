@@ -1,27 +1,32 @@
 import { Memory } from "./memory";
 import { CPU } from "./cpu";
 
-const MODE_HBLANK = 0; 
-const MODE_VBLANK = 1; 
-const MODE_OAM = 2;    
-const MODE_DRAW = 3;   
+// PPU modes, stored in the low 2 bits of STAT (0xFF41)
+const MODE_HBLANK = 0;
+const MODE_VBLANK = 1;
+const MODE_OAM = 2;
+const MODE_DRAW = 3;
 
+// Timing in CPU cycles: each line is OAM(80) + draw(172) + hblank(204) = 456
 const CYCLES_PER_LINE = 456;
-const OAM_CYCLES = 80;          
-const DRAW_CYCLES = 172;       
+const OAM_CYCLES = 80;
+const DRAW_CYCLES = 172;
 
 const VISIBLE_LINES = 144; 
-const TOTAL_LINES = 154;   
+const TOTAL_LINES = 154;
 
 export class PPU {
   private memory: Memory;
   private cpu: CPU;
 
-  private modeClock = 0; 
+  private modeClock = 0;
   private mode = MODE_OAM;
 
   readonly framebuffer = new Uint8Array(160 * 144);
-  frameReady = false; 
+
+  // Background color number per pixel for the current line, so sprites can honor priority
+  private bgColorLine = new Uint8Array(160);
+  frameReady = false;
 
   constructor(memory: Memory, cpu: CPU) {
     this.memory = memory;
@@ -42,6 +47,7 @@ export class PPU {
     this.memory.write(0xff41, (stat & 0xfc) | mode);
   }
 
+  // Advance the PPU by the cycles the last instruction took
   step(cycles: number): void {
     this.modeClock += cycles;
 
@@ -57,7 +63,7 @@ export class PPU {
         if (this.modeClock >= DRAW_CYCLES) {
           this.modeClock -= DRAW_CYCLES;
           this.setMode(MODE_HBLANK);
-          this.renderScanline(); 
+          this.renderScanline();
         }
         break;
 
@@ -67,11 +73,12 @@ export class PPU {
           this.ly = this.ly + 1;
 
           if (this.ly === VISIBLE_LINES) {
+            // Last visible line done: enter V-Blank and fire its interrupt
             this.setMode(MODE_VBLANK);
-            this.frameReady = true; 
+            this.frameReady = true;
             this.cpu.requestInterrupt(0); 
           } else {
-            this.setMode(MODE_OAM); 
+            this.setMode(MODE_OAM);
           }
         }
         break;
@@ -82,14 +89,15 @@ export class PPU {
           this.ly = this.ly + 1;
 
           if (this.ly >= TOTAL_LINES) {
-            this.ly = 0;
+            this.ly = 0; 
             this.setMode(MODE_OAM);
           }
         }
         break;
     }
   }
-  
+
+  // Render one background line into the framebuffer at the current LY
   private renderScanline(): void {
     const lcdc = this.memory.read(0xff40);
 
@@ -146,7 +154,77 @@ export class PPU {
 
       const shade = (palette >> (colorNumber * 2)) & 0x03;
 
+      this.bgColorLine[x] = colorNumber;
       this.framebuffer[line * 160 + x] = shade;
+    }
+
+    // Draw sprites on top of the background for this line
+    this.renderSprites(line, lcdc);
+  }
+
+  // Draw the sprites intersecting this scanline, over the background
+  private renderSprites(line: number, lcdc: number): void {
+    if ((lcdc & 0x02) === 0) {
+      return; 
+    }
+
+    const spriteHeight = (lcdc & 0x04) !== 0 ? 16 : 8; 
+
+    let drawn = 0;
+
+    for (let i = 0; i < 40 && drawn < 10; i++) {
+      const base = 0xfe00 + i * 4;
+      const spriteY = this.memory.read(base + 0) - 16; 
+      const spriteX = this.memory.read(base + 1) - 8;
+      let tile = this.memory.read(base + 2);
+      const flags = this.memory.read(base + 3);
+
+      if (line < spriteY || line >= spriteY + spriteHeight) {
+        continue; 
+      }
+      drawn++;
+
+      const behindBg = (flags & 0x80) !== 0;
+      const flipY = (flags & 0x40) !== 0;
+      const flipX = (flags & 0x20) !== 0;
+      const paletteAddr = (flags & 0x10) !== 0 ? 0xff49 : 0xff48; 
+      const palette = this.memory.read(paletteAddr);
+
+      if (spriteHeight === 16) {
+        tile &= 0xfe; 
+      }
+
+      let row = line - spriteY;
+      if (flipY) {
+        row = spriteHeight - 1 - row;
+      }
+
+      const tileAddress = 0x8000 + tile * 16 + row * 2;
+      const lowByte = this.memory.read(tileAddress);
+      const highByte = this.memory.read(tileAddress + 1);
+
+      for (let col = 0; col < 8; col++) {
+        const screenX = spriteX + col;
+        if (screenX < 0 || screenX >= 160) {
+          continue;
+        }
+
+        const bit = flipX ? col : 7 - col;
+        const lowBit = (lowByte >> bit) & 1;
+        const highBit = (highByte >> bit) & 1;
+        const colorNumber = (highBit << 1) | lowBit;
+
+        if (colorNumber === 0) {
+          continue; 
+        }
+
+        if (behindBg && this.bgColorLine[screenX] !== 0) {
+          continue; 
+        }
+
+        const shade = (palette >> (colorNumber * 2)) & 0x03;
+        this.framebuffer[line * 160 + screenX] = shade;
+      }
     }
   }
 }
