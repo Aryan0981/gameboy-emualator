@@ -2,12 +2,13 @@ import { Memory } from "./memory";
 import { CPU } from "./cpu";
 import { Timer } from "./timer";
 import { PPU } from "./ppu";
+import { Joypad } from "./joypad";
 
-// --- Screen setup ---
 const WIDTH = 160;
 const HEIGHT = 144;
-const SCALE = 4; // draw at 4x so it's not tiny
+const SCALE = 4;
 
+// Screen: 160x144 canvas scaled up 4x
 const canvas = document.createElement("canvas");
 canvas.width = WIDTH * SCALE;
 canvas.height = HEIGHT * SCALE;
@@ -19,22 +20,20 @@ document.body.appendChild(canvas);
 const ctx = canvas.getContext("2d")!;
 ctx.imageSmoothingEnabled = false;
 
-// A file input so you can pick a .gb ROM from disk.
 const input = document.createElement("input");
 input.type = "file";
 input.accept = ".gb";
 document.body.insertBefore(input, canvas);
 document.body.insertBefore(document.createElement("br"), canvas);
 
-// The four Game Boy shades mapped to the classic green-tinted palette.
+// The four Game Boy shades, mapped to the classic green palette
 const SHADES = [
-  [155, 188, 15], // 0 lightest
-  [139, 172, 15], // 1
-  [48, 98, 48],   // 2
-  [15, 56, 15],   // 3 darkest
+  [155, 188, 15],
+  [139, 172, 15],
+  [48, 98, 48],
+  [15, 56, 15],
 ];
 
-// An offscreen buffer we draw the 160x144 image into, then scale up.
 const image = ctx.createImageData(WIDTH, HEIGHT);
 
 let memory: Memory;
@@ -43,17 +42,48 @@ let timer: Timer;
 let ppu: PPU;
 let running = false;
 
-// Roughly one frame's worth of CPU cycles.
+// Keyboard -> Game Boy buttons
+const joypad = new Joypad();
+
+const KEY_MAP: Record<string, string> = {
+  ArrowUp: "up",
+  ArrowDown: "down",
+  ArrowLeft: "left",
+  ArrowRight: "right",
+  z: "a",
+  x: "b",
+  Enter: "start",
+  Shift: "select",
+};
+
+window.addEventListener("keydown", (e) => {
+  const button = KEY_MAP[e.key];
+  if (button) {
+    joypad.setButton(button, true);
+    e.preventDefault();
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  const button = KEY_MAP[e.key];
+  if (button) {
+    joypad.setButton(button, false);
+    e.preventDefault();
+  }
+});
+
 const CYCLES_PER_FRAME = 70224;
 
+// Set up a fresh emulator for a loaded ROM and start running
 function bootEmulator(rom: Uint8Array): void {
   memory = new Memory();
   memory.loadRom(rom);
+  memory.connectJoypad(joypad);
   cpu = new CPU(memory);
   timer = new Timer(memory);
   ppu = new PPU(memory, cpu);
 
-  // Post-boot register state (as if the boot ROM already ran).
+  // Register state as it would be right after the boot ROM runs
   cpu.a = 0x01; cpu.f = 0xb0;
   cpu.b = 0x00; cpu.c = 0x13;
   cpu.d = 0x00; cpu.e = 0xd8;
@@ -65,7 +95,7 @@ function bootEmulator(rom: Uint8Array): void {
   requestAnimationFrame(frame);
 }
 
-// Run one frame's worth of emulation, then paint the result.
+// Run one frame's worth of cycles, driving CPU, timer, and PPU together
 function frame(): void {
   if (!running) return;
 
@@ -81,7 +111,7 @@ function frame(): void {
   requestAnimationFrame(frame);
 }
 
-// Copy the PPU framebuffer into the canvas, scaled up.
+// Copy the PPU framebuffer to the canvas, scaled up
 function paint(): void {
   const data = image.data;
   for (let i = 0; i < WIDTH * HEIGHT; i++) {
@@ -94,7 +124,6 @@ function paint(): void {
     data[p + 3] = 255;
   }
 
-  // Put the small image on a temporary canvas, then scale onto the visible one.
   const tmp = document.createElement("canvas");
   tmp.width = WIDTH;
   tmp.height = HEIGHT;
@@ -104,7 +133,6 @@ function paint(): void {
   ctx.drawImage(tmp, 0, 0, WIDTH * SCALE, HEIGHT * SCALE);
 }
 
-// When you pick a ROM file, boot it.
 input.addEventListener("change", async () => {
   const file = input.files?.[0];
   if (!file) return;
