@@ -1,6 +1,6 @@
 import { Joypad } from "./joypad";
 
-// Memory bus with MBC1 cartridge bank-switching. The full ROM is kept
+// Memory bus with MBC1/MBC3 cartridge bank-switching, plus OAM DMA
 export class Memory {
   private data = new Uint8Array(0x10000); // work RAM, VRAM, I/O
   private rom = new Uint8Array(0x8000);   // full cartridge ROM
@@ -8,6 +8,7 @@ export class Memory {
   private joypad: Joypad | null = null;
 
   private mbc1 = false;
+  private mbc3 = false;
   private romBank = 1;
   private ramBank = 0;
   private ramEnabled = false;
@@ -25,6 +26,7 @@ export class Memory {
     // Cartridge type byte at 0x0147 tells us the mapper
     const type = rom[0x0147];
     this.mbc1 = type >= 0x01 && type <= 0x03;
+    this.mbc3 = type >= 0x0f && type <= 0x13;
 
     for (let i = 0; i < rom.length && i < 0x8000; i++) this.data[i] = rom[i];
   }
@@ -43,7 +45,7 @@ export class Memory {
 
     // Switchable ROM bank
     if (address < 0x8000) {
-      const bank = this.mbc1 ? this.effectiveRomBank() : 1;
+      const bank = (this.mbc1 || this.mbc3) ? this.effectiveRomBank() : 1;
       const offset = bank * 0x4000 + (address - 0x4000);
       return offset < this.rom.length ? this.rom[offset] : 0xff;
     }
@@ -51,7 +53,7 @@ export class Memory {
     // External cartridge RAM
     if (address >= 0xa000 && address < 0xc000) {
       if (!this.ramEnabled) return 0xff;
-      const bank = this.mode === 1 ? this.ramBank : 0;
+      const bank = this.ramBankSelect();
       return this.ram[bank * 0x2000 + (address - 0xa000)];
     }
 
@@ -62,8 +64,20 @@ export class Memory {
     address &= 0xffff;
     value &= 0xff;
 
+    // Writes to the ROM region are mapper control commands, not data
     if (address < 0x8000) {
-      if (this.mbc1) this.mbcWrite(address, value);
+      if (this.mbc1) this.mbc1Write(address, value);
+      else if (this.mbc3) this.mbc3Write(address, value);
+      return;
+    }
+
+    // 0xFF46: OAM DMA - copy 160 bytes from (value * 0x100) into OAM
+    if (address === 0xff46) {
+      const source = value << 8;
+      for (let i = 0; i < 0xa0; i++) {
+        this.data[0xfe00 + i] = this.read(source + i);
+      }
+      this.data[address] = value;
       return;
     }
 
@@ -74,7 +88,7 @@ export class Memory {
 
     if (address >= 0xa000 && address < 0xc000) {
       if (!this.ramEnabled) return;
-      const bank = this.mode === 1 ? this.ramBank : 0;
+      const bank = this.ramBankSelect();
       this.ram[bank * 0x2000 + (address - 0xa000)] = value;
       return;
     }
@@ -83,7 +97,7 @@ export class Memory {
   }
 
   // Each ROM-region range is a different MBC1 control register
-  private mbcWrite(address: number, value: number): void {
+  private mbc1Write(address: number, value: number): void {
     if (address < 0x2000) {
       this.ramEnabled = (value & 0x0f) === 0x0a;
     } else if (address < 0x4000) {
@@ -98,10 +112,34 @@ export class Memory {
     }
   }
 
+  // MBC3 sets a full 7-bit ROM bank in one write; RAM bank on 0x4000-0x5FFF
+  private mbc3Write(address: number, value: number): void {
+    if (address < 0x2000) {
+      this.ramEnabled = (value & 0x0f) === 0x0a;
+    } else if (address < 0x4000) {
+      let bank = value & 0x7f;
+      if (bank === 0) bank = 1;
+      this.romBank = bank;
+    } else if (address < 0x6000) {
+      this.ramBank = value & 0x03; 
+    }
+    // 0x6000-0x7FFF latches the real-time clock, which we don't emulate
+  }
+
   private effectiveRomBank(): number {
+    if (this.mbc3) {
+      return this.romBank; 
+    }
+    // MBC1: in mode 0 the high bits extend the ROM bank number
     if (this.mode === 0) {
       return (this.bankHigh << 5) | this.romBank;
     }
     return this.romBank;
+  }
+
+  private ramBankSelect(): number {
+    // MBC3 banks RAM directly; MBC1 only in mode 1
+    if (this.mbc3) return this.ramBank;
+    return this.mode === 1 ? this.ramBank : 0;
   }
 }
