@@ -11,6 +11,8 @@ export class Memory {
   private mbc3 = false;
   private mbc5 = false;
   private mbc2 = false;
+  private hasBattery = false; // cartridge has battery-backed RAM (saves)
+  ramDirty = false;           // set when RAM changes, so saves can be flushed
   private romBankHigh = 0;
   private romBank = 1;
   private ramBank = 0;
@@ -27,6 +29,21 @@ export class Memory {
     this.joypad = joypad;
   }
 
+  // Whether this cartridge saves (has battery-backed RAM)
+  isBattery(): boolean {
+    return this.hasBattery;
+  }
+
+  // Export the cartridge RAM so it can be persisted
+  getRamSnapshot(): Uint8Array {
+    return this.ram.slice();
+  }
+
+  // Restore previously-saved cartridge RAM
+  loadRamSnapshot(saved: Uint8Array): void {
+    this.ram.set(saved.subarray(0, this.ram.length));
+  }
+
   loadRom(rom: Uint8Array) {
     this.rom = new Uint8Array(rom.length);
     this.rom.set(rom);
@@ -37,6 +54,9 @@ export class Memory {
     this.mbc3 = type >= 0x0f && type <= 0x13;
     this.mbc5 = type >= 0x19 && type <= 0x1e;
     this.mbc2 = type === 0x05 || type === 0x06;
+    // Cart types that include a battery keep their RAM across power-off
+    const batteryTypes = [0x03, 0x06, 0x09, 0x0d, 0x0f, 0x10, 0x13, 0x1b, 0x1e];
+    this.hasBattery = batteryTypes.includes(type);
 
     for (let i = 0; i < rom.length && i < 0x8000; i++) this.data[i] = rom[i];
   }
@@ -109,10 +129,12 @@ export class Memory {
       if (!this.ramEnabled) return;
       if (this.mbc2) {
         this.ram[(address - 0xa000) & 0x1ff] = value & 0x0f; // 4-bit
+        this.ramDirty = true;
         return;
       }
       const bank = this.ramBankSelect();
       this.ram[bank * 0x2000 + (address - 0xa000)] = value;
+      this.ramDirty = true;
       return;
     }
 

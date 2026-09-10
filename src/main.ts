@@ -52,6 +52,41 @@ const CPU_HZ = 4194304;
 // Keyboard -> Game Boy buttons
 const joypad = new Joypad();
 
+// Save persistence: battery-backed RAM is stored in localStorage per game
+let currentSaveKey: string | null = null;
+
+// Build a per-game key from the ROM header title bytes (0x134-0x143)
+function saveKeyForRom(rom: Uint8Array): string {
+  let title = "";
+  for (let i = 0x134; i <= 0x143; i++) {
+    const c = rom[i];
+    if (c === 0) break;
+    title += String.fromCharCode(c);
+  }
+  return "gbsave:" + title.trim();
+}
+
+// Write the current cartridge RAM to localStorage
+function persistSave(): void {
+  if (!currentSaveKey || !memory.isBattery()) return;
+  const ram = memory.getRamSnapshot();
+  let binary = "";
+  for (let i = 0; i < ram.length; i++) binary += String.fromCharCode(ram[i]);
+  localStorage.setItem(currentSaveKey, btoa(binary));
+  memory.ramDirty = false;
+}
+
+// Load a previously-saved cartridge RAM from localStorage, if any
+function restoreSave(): void {
+  if (!currentSaveKey || !memory.isBattery()) return;
+  const stored = localStorage.getItem(currentSaveKey);
+  if (!stored) return;
+  const binary = atob(stored);
+  const ram = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) ram[i] = binary.charCodeAt(i);
+  memory.loadRamSnapshot(ram);
+}
+
 const KEY_MAP: Record<string, string> = {
   ArrowUp: "up",
   ArrowDown: "down",
@@ -100,6 +135,8 @@ function bootEmulator(rom: Uint8Array): void {
   memory = new Memory();
   memory.loadRom(rom);
   memory.connectJoypad(joypad);
+  currentSaveKey = saveKeyForRom(rom);
+  restoreSave();
   cpu = new CPU(memory);
   timer = new Timer(memory);
   ppu = new PPU(memory, cpu);
@@ -131,6 +168,12 @@ function frame(): void {
   }
 
   paint();
+
+  // Flush the save when the game has written to its RAM
+  if (memory.ramDirty) {
+    persistSave();
+  }
+
   requestAnimationFrame(frame);
 }
 
@@ -161,6 +204,10 @@ input.addEventListener("change", async () => {
   if (!file) return;
   const buffer = await file.arrayBuffer();
   bootEmulator(new Uint8Array(buffer));
+});
+
+window.addEventListener("beforeunload", () => {
+  persistSave();
 });
 
 console.log("Game Boy emulator ready - pick a .gb ROM to run");
