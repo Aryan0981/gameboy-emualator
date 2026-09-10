@@ -42,6 +42,8 @@ class SquareChannel {
     this.dutyIndex = duty & 3;
   }
 
+  // Configure envelope params. Only reset the live volume when the register
+  // actually changes, so the running envelope isn't wiped every refresh
   setEnvelope(value: number): void {
     this.startVolume = (value >> 4) & 0x0f;
     this.envDirection = (value & 0x08) ? 1 : -1;
@@ -51,7 +53,7 @@ class SquareChannel {
       this.volume = this.startVolume;
       this.envTimer = this.envPeriod;
     }
-    if ((value & 0xf8) === 0) this.enabled = false; 
+    if ((value & 0xf8) === 0) this.enabled = false; // DAC off
   }
 
   setSweep(value: number): void {
@@ -127,7 +129,7 @@ class WaveChannel {
   frequency = 0;
   private freqTimer = 0;
   private position = 0;
-  private volumeShift = 0; 
+  private volumeShift = 0; // 0=mute, 1=full, 2=half, 3=quarter
   private lengthCounter = 0;
   private lengthEnabled = false;
   private samples = new Uint8Array(32);
@@ -261,7 +263,7 @@ class NoiseChannel {
   }
 }
 
-const FRAME_SEQ_PERIOD = 8192; 
+const FRAME_SEQ_PERIOD = 8192; // CPU cycles per frame-sequencer step (512Hz)
 
 export class APU {
   private memory: Memory;
@@ -347,11 +349,41 @@ export class APU {
     this.ch1.clockSweep();
   }
 
-  // Generate count mixed samples at the given cycles-per-sample rate
+  // Generate `count` mixed samples at the given cycles-per-sample rate
   generateSamples(count: number, cyclesPerSample: number): Float32Array {
     const out = new Float32Array(count);
     for (let i = 0; i < count; i++) {
       this.refresh();
+
+      // NR52 bit 7: master sound switch. When off, output is silent
+      const nr52 = this.memory.read(0xff26);
+      if ((nr52 & 0x80) === 0) {
+        // Advance the clock but emit silence
+        for (let c = 0; c < cyclesPerSample; c++) {
+          this.frameSeqTimer--;
+          if (this.frameSeqTimer <= 0) {
+            this.frameSeqTimer = FRAME_SEQ_PERIOD;
+            this.stepFrameSequencer();
+          }
+        }
+        out[i] = 0;
+        continue;
+      }
+
+      // NR51: routes each channel to left/right. We sum to mono, so a channel
+      // counts if it is enabled to either output
+      const nr51 = this.memory.read(0xff25);
+      const ch1On = (nr51 & 0x11) !== 0;
+      const ch2On = (nr51 & 0x22) !== 0;
+      const ch3On = (nr51 & 0x44) !== 0;
+      const ch4On = (nr51 & 0x88) !== 0;
+
+      // NR50: master volume per output (0-7 each). Use the louder side for mono
+      const nr50 = this.memory.read(0xff24);
+      const leftVol = (nr50 >> 4) & 0x07;
+      const rightVol = nr50 & 0x07;
+      const masterVol = Math.max(leftVol, rightVol) / 7;
+
       let sample = 0;
       for (let c = 0; c < cyclesPerSample; c++) {
         this.frameSeqTimer--;
@@ -359,9 +391,18 @@ export class APU {
           this.frameSeqTimer = FRAME_SEQ_PERIOD;
           this.stepFrameSequencer();
         }
-        sample = this.ch1.tick() + this.ch2.tick() + this.ch3.tick() + this.ch4.tick();
+        // Tick every channel so timers keep running, but only mix routed ones
+        const s1 = this.ch1.tick();
+        const s2 = this.ch2.tick();
+        const s3 = this.ch3.tick();
+        const s4 = this.ch4.tick();
+        sample =
+          (ch1On ? s1 : 0) +
+          (ch2On ? s2 : 0) +
+          (ch3On ? s3 : 0) +
+          (ch4On ? s4 : 0);
       }
-      out[i] = sample * 0.15;
+      out[i] = sample * 0.15 * masterVol;
     }
     return out;
   }

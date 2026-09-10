@@ -11,9 +11,14 @@ export class Memory {
   private mbc3 = false;
   private mbc5 = false;
   private mbc2 = false;
-  private romBankHigh = 0; 
+  private romBankHigh = 0;
   private romBank = 1;
   private ramBank = 0;
+
+  // MBC3 real-time clock: live registers, latched snapshot, and latch state
+  private rtcLatched = { sec: 0, min: 0, hour: 0, dayLow: 0, dayHigh: 0 };
+  private rtcLatchArmed = false;
+  private rtcBaseTime = Date.now();
   private ramEnabled = false;
   private mode = 0;
   private bankHigh = 0;
@@ -61,6 +66,10 @@ export class Memory {
       if (this.mbc2) {
         return 0xf0 | (this.ram[(address - 0xa000) & 0x1ff] & 0x0f); 
       }
+      // MBC3: RAM-bank values 0x08-0x0C map to the latched RTC registers
+      if (this.mbc3 && this.ramBank >= 0x08) {
+        return this.readRtc(this.ramBank);
+      }
       const bank = this.ramBankSelect();
       return this.ram[bank * 0x2000 + (address - 0xa000)];
     }
@@ -99,7 +108,7 @@ export class Memory {
     if (address >= 0xa000 && address < 0xc000) {
       if (!this.ramEnabled) return;
       if (this.mbc2) {
-        this.ram[(address - 0xa000) & 0x1ff] = value & 0x0f; 
+        this.ram[(address - 0xa000) & 0x1ff] = value & 0x0f; // 4-bit
         return;
       }
       const bank = this.ramBankSelect();
@@ -116,7 +125,7 @@ export class Memory {
       this.ramEnabled = (value & 0x0f) === 0x0a;
     } else if (address < 0x4000) {
       let low = value & 0x1f;
-      if (low === 0) low = 1; 
+      if (low === 0) low = 1; // bank 0 maps to 1 in the switchable slot
       this.romBank = low;
     } else if (address < 0x6000) {
       this.bankHigh = value & 0x03;
@@ -135,9 +144,13 @@ export class Memory {
       if (bank === 0) bank = 1; 
       this.romBank = bank;
     } else if (address < 0x6000) {
-      this.ramBank = value & 0x03; 
+      this.ramBank = value & 0x0f; 
+    } else {
+      if (value === 0x01 && this.rtcLatchArmed) {
+        this.latchRtc();
+      }
+      this.rtcLatchArmed = value === 0x00;
     }
-    // 0x6000-0x7FFF latches the real-time clock, which we don't emulate
   }
 
   // MBC2: address bit 8 picks RAM-enable (0) vs ROM-bank (1); 4-bit bank
@@ -158,7 +171,7 @@ export class Memory {
     if (address < 0x2000) {
       this.ramEnabled = (value & 0x0f) === 0x0a;
     } else if (address < 0x3000) {
-      this.romBank = value;
+      this.romBank = value; 
     } else if (address < 0x4000) {
       this.romBankHigh = value & 0x01; 
     } else if (address < 0x6000) {
@@ -174,13 +187,36 @@ export class Memory {
       return (this.romBankHigh << 8) | this.romBank; 
     }
     if (this.mbc3) {
-      return this.romBank; 
+      return this.romBank;
     }
     // MBC1: in mode 0 the high bits extend the ROM bank number
     if (this.mode === 0) {
       return (this.bankHigh << 5) | this.romBank;
     }
     return this.romBank;
+  }
+
+  // Freeze the current elapsed time into the latched RTC snapshot
+  private latchRtc(): void {
+    const elapsed = Math.floor((Date.now() - this.rtcBaseTime) / 1000);
+    this.rtcLatched.sec = elapsed % 60;
+    this.rtcLatched.min = Math.floor(elapsed / 60) % 60;
+    this.rtcLatched.hour = Math.floor(elapsed / 3600) % 24;
+    const days = Math.floor(elapsed / 86400);
+    this.rtcLatched.dayLow = days & 0xff;
+    this.rtcLatched.dayHigh = (days >> 8) & 0x01;
+  }
+
+  // Read a latched RTC register (selected by RAM-bank values 0x08-0x0C)
+  private readRtc(reg: number): number {
+    switch (reg) {
+      case 0x08: return this.rtcLatched.sec;
+      case 0x09: return this.rtcLatched.min;
+      case 0x0a: return this.rtcLatched.hour;
+      case 0x0b: return this.rtcLatched.dayLow;
+      case 0x0c: return this.rtcLatched.dayHigh;
+      default: return 0xff;
+    }
   }
 
   private ramBankSelect(): number {
